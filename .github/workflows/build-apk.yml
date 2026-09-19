@@ -21,7 +21,7 @@ jobs:
                   gradlePluginPortal()
               }
           }
-          import org.gradle.api.initialization.resolve.RepositoriesMode
+
           dependencyResolutionManagement {
               repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
               repositories {
@@ -29,6 +29,7 @@ jobs:
                   mavenCentral()
               }
           }
+
           rootProject.name = "MP4ToM4A"
           include(":app")
           EOF
@@ -54,6 +55,15 @@ jobs:
           android {
               namespace = "com.example.mp4tom4a"
               compileSdk = 35
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
 
               defaultConfig {
                   applicationId = "com.example.mp4tom4a"
@@ -191,28 +201,21 @@ jobs:
               }
 
               private fun convert(uri: Uri) {
-
                   convertButton.isEnabled = false
                   status.text = "변환 중..."
 
                   Thread {
-
                       try {
-
                           val extractor = MediaExtractor()
                           extractor.setDataSource(this, uri, null)
 
                           var audioTrack = -1
 
                           for (i in 0 until extractor.trackCount) {
-
                               val format = extractor.getTrackFormat(i)
-                              val mime =
-                                  format.getString(MediaFormat.KEY_MIME)
+                              val mime = format.getString(MediaFormat.KEY_MIME)
 
-                              if (mime != null &&
-                                  mime.startsWith("audio/")) {
-
+                              if (mime != null && mime.startsWith("audio/")) {
                                   audioTrack = i
                                   break
                               }
@@ -224,60 +227,38 @@ jobs:
 
                           extractor.selectTrack(audioTrack)
 
-                          val musicDir =
-                              getExternalFilesDir(
-                                  Environment.DIRECTORY_MUSIC
-                              )
+                          val musicDir = getExternalFilesDir(Environment.DIRECTORY_MUSIC)
+                              ?: throw Exception("저장 폴더를 만들 수 없습니다.")
 
-                          if (musicDir == null) {
-                              throw Exception("저장 폴더를 만들 수 없습니다.")
-                          }
+                          val output = File(
+                              musicDir,
+                              getFileName(uri) + ".m4a"
+                          )
 
-                          val output =
-                              File(
-                                  musicDir,
-                                  getFileName(uri) + ".m4a"
-                              )
+                          val muxer = MediaMuxer(
+                              output.absolutePath,
+                              MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4
+                          )
 
-                          val muxer =
-                              MediaMuxer(
-                                  output.absolutePath,
-                                  MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4
-                              )
-
-                          val outputTrack =
-                              muxer.addTrack(
-                                  extractor.getTrackFormat(audioTrack)
-                              )
+                          val outputTrack = muxer.addTrack(
+                              extractor.getTrackFormat(audioTrack)
+                          )
 
                           muxer.start()
 
-                          val buffer =
-                              ByteBuffer.allocate(1024 * 1024)
-
-                          val info =
-                              MediaCodec.BufferInfo()
+                          val buffer = ByteBuffer.allocate(1024 * 1024)
+                          val info = MediaCodec.BufferInfo()
 
                           while (true) {
-
-                              val size =
-                                  extractor.readSampleData(buffer, 0)
-
+                              val size = extractor.readSampleData(buffer, 0)
                               if (size < 0) break
 
                               info.offset = 0
                               info.size = size
-                              info.presentationTimeUs =
-                                  extractor.sampleTime
-                              info.flags =
-                                  extractor.sampleFlags
+                              info.presentationTimeUs = extractor.sampleTime
+                              info.flags = extractor.sampleFlags
 
-                              muxer.writeSampleData(
-                                  outputTrack,
-                                  buffer,
-                                  info
-                              )
-
+                              muxer.writeSampleData(outputTrack, buffer, info)
                               extractor.advance()
                           }
 
@@ -287,18 +268,12 @@ jobs:
 
                           runOnUiThread {
                               convertButton.isEnabled = true
-
-                              status.text =
-                                  "변환 완료!\n\n" +
-                                  output.absolutePath
+                              status.text = "변환 완료!\n\n" + output.absolutePath
                           }
-
                       } catch (e: Exception) {
-
                           runOnUiThread {
                               convertButton.isEnabled = true
-                              status.text =
-                                  "변환 실패:\n${e.message}"
+                              status.text = "변환 실패:\n${e.message}"
                           }
                       }
                   }.start()
