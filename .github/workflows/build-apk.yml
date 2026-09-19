@@ -3,6 +3,9 @@ name: Build MP4 to M4A APK
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -300,3 +303,10 @@ jobs:
         with:
           name: MP4-to-M4A
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v1.0.${{ github.run_number }}"
+          gh release create "$TAG" app/build/outputs/apk/debug/app-debug.apk             --title "MP4 to M4A APK $TAG"             --notes "MP4 영상에서 오디오를 M4A로 추출하는 Android APK입니다."
