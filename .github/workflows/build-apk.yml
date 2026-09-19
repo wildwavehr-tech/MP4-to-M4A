@@ -1,0 +1,326 @@
+name: Build MP4 to M4A APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create Android project
+        run: |
+          mkdir -p app/src/main/java/com/example/mp4tom4a
+          mkdir -p app/src/main/res/values
+
+          cat > settings.gradle.kts <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "MP4ToM4A"
+          include(":app")
+          EOF
+
+          cat > build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.7.3" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+          }
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          EOF
+
+          cat > app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.example.mp4tom4a"
+              compileSdk = 35
+
+              defaultConfig {
+                  applicationId = "com.example.mp4tom4a"
+                  minSdk = 26
+                  targetSdk = 35
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+          }
+          EOF
+
+          cat > app/src/main/res/values/styles.xml <<'EOF'
+          <resources>
+              <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:colorAccent">#1565C0</item>
+              </style>
+          </resources>
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:theme="@style/AppTheme"
+                  android:label="MP4 → M4A">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/example/mp4tom4a/MainActivity.kt <<'EOF'
+          package com.example.mp4tom4a
+
+          import android.app.Activity
+          import android.os.Bundle
+          import android.os.Environment
+          import android.content.Intent
+          import android.net.Uri
+          import android.media.MediaExtractor
+          import android.media.MediaFormat
+          import android.media.MediaMuxer
+          import android.media.MediaCodec
+          import android.provider.OpenableColumns
+          import android.widget.*
+          import java.nio.ByteBuffer
+          import java.io.File
+
+          class MainActivity : Activity() {
+
+              private lateinit var status: TextView
+              private lateinit var convertButton: Button
+              private var selectedUri: Uri? = null
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+
+                  val layout = LinearLayout(this)
+                  layout.orientation = LinearLayout.VERTICAL
+                  layout.setPadding(40, 60, 40, 40)
+
+                  val title = TextView(this)
+                  title.text = "MP4 → M4A"
+                  title.textSize = 30f
+
+                  val selectButton = Button(this)
+                  selectButton.text = "MP4 파일 선택"
+
+                  convertButton = Button(this)
+                  convertButton.text = "M4A로 변환"
+                  convertButton.isEnabled = false
+
+                  status = TextView(this)
+                  status.text = "MP4 파일을 선택하세요."
+                  status.textSize = 17f
+
+                  layout.addView(title)
+                  layout.addView(selectButton)
+                  layout.addView(convertButton)
+                  layout.addView(status)
+
+                  setContentView(layout)
+
+                  selectButton.setOnClickListener {
+                      val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+                      intent.type = "video/*"
+                      intent.addCategory(Intent.CATEGORY_OPENABLE)
+                      startActivityForResult(intent, 100)
+                  }
+
+                  convertButton.setOnClickListener {
+                      selectedUri?.let { convert(it) }
+                  }
+              }
+
+              override fun onActivityResult(
+                  requestCode: Int,
+                  resultCode: Int,
+                  data: Intent?
+              ) {
+                  super.onActivityResult(requestCode, resultCode, data)
+
+                  if (requestCode == 100 &&
+                      resultCode == RESULT_OK &&
+                      data?.data != null) {
+
+                      selectedUri = data.data
+                      convertButton.isEnabled = true
+                      status.text = "MP4 선택 완료"
+                  }
+              }
+
+              private fun getFileName(uri: Uri): String {
+                  var name = "audio"
+
+                  contentResolver.query(
+                      uri,
+                      arrayOf(OpenableColumns.DISPLAY_NAME),
+                      null,
+                      null,
+                      null
+                  )?.use {
+                      if (it.moveToFirst()) {
+                          name = it.getString(0)
+                      }
+                  }
+
+                  return name.substringBeforeLast(".")
+              }
+
+              private fun convert(uri: Uri) {
+
+                  convertButton.isEnabled = false
+                  status.text = "변환 중..."
+
+                  Thread {
+
+                      try {
+
+                          val extractor = MediaExtractor()
+                          extractor.setDataSource(this, uri, null)
+
+                          var audioTrack = -1
+
+                          for (i in 0 until extractor.trackCount) {
+
+                              val format = extractor.getTrackFormat(i)
+                              val mime =
+                                  format.getString(MediaFormat.KEY_MIME)
+
+                              if (mime != null &&
+                                  mime.startsWith("audio/")) {
+
+                                  audioTrack = i
+                                  break
+                              }
+                          }
+
+                          if (audioTrack == -1) {
+                              throw Exception("오디오 트랙이 없습니다.")
+                          }
+
+                          extractor.selectTrack(audioTrack)
+
+                          val musicDir =
+                              getExternalFilesDir(
+                                  Environment.DIRECTORY_MUSIC
+                              )
+
+                          if (musicDir == null) {
+                              throw Exception("저장 폴더를 만들 수 없습니다.")
+                          }
+
+                          val output =
+                              File(
+                                  musicDir,
+                                  getFileName(uri) + ".m4a"
+                              )
+
+                          val muxer =
+                              MediaMuxer(
+                                  output.absolutePath,
+                                  MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4
+                              )
+
+                          val outputTrack =
+                              muxer.addTrack(
+                                  extractor.getTrackFormat(audioTrack)
+                              )
+
+                          muxer.start()
+
+                          val buffer =
+                              ByteBuffer.allocate(1024 * 1024)
+
+                          val info =
+                              MediaCodec.BufferInfo()
+
+                          while (true) {
+
+                              val size =
+                                  extractor.readSampleData(buffer, 0)
+
+                              if (size < 0) break
+
+                              info.offset = 0
+                              info.size = size
+                              info.presentationTimeUs =
+                                  extractor.sampleTime
+                              info.flags =
+                                  extractor.sampleFlags
+
+                              muxer.writeSampleData(
+                                  outputTrack,
+                                  buffer,
+                                  info
+                              )
+
+                              extractor.advance()
+                          }
+
+                          muxer.stop()
+                          muxer.release()
+                          extractor.release()
+
+                          runOnUiThread {
+                              convertButton.isEnabled = true
+
+                              status.text =
+                                  "변환 완료!\n\n" +
+                                  output.absolutePath
+                          }
+
+                      } catch (e: Exception) {
+
+                          runOnUiThread {
+                              convertButton.isEnabled = true
+                              status.text =
+                                  "변환 실패:\n${e.message}"
+                          }
+                      }
+                  }.start()
+              }
+          }
+          EOF
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Build APK
+        run: gradle :app:assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MP4-to-M4A
+          path: app/build/outputs/apk/debug/app-debug.apk
